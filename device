@@ -1,0 +1,154 @@
+// device
+// variable to hold latest power from board
+// Class for display
+class display {
+    hardwareref = null;
+    hardwarestate = 0;
+    displayvalue = 0;
+    blinking = false;
+    tester = false;
+    myname="";
+    wakeup = 0;
+    
+    constructor (_hardwareref,_outputtype, _displayname) {
+        this.hardwareref = _hardwareref;
+        this.hardwareref.configure(_outputtype);
+        this.myname = _displayname;
+    }
+    function write (arg) {
+        arg = vtune (arg);
+        hardwareref.write(arg);
+        hardwarestate = arg;
+       // server.log ("hardware state (" + myname + "): " + arg);
+    }
+    // Minor voltage adjustments
+    function vtune (arg) {
+        if (arg < 0.15) {
+            arg*=1.3 }
+        else {
+            arg*=1.05;
+        }
+        return arg;
+    }
+    function setvalue (arg) {
+     if(!this.tester) {
+        server.log("setvalue (" + myname + "): " + arg);
+        if (arg==0) {
+            this.displayvalue = 0;
+            server.log("clear " + myname );
+            this.dontblink();
+            this.update();
+        } else if (arg>=1) {
+            // Here value is coming in minutes (max 10)
+            // so we want to divide by 20 to turn into the right
+            // output range (0-0.5v)
+            this.displayvalue=arg.tofloat()/20;
+            this.dontblink ();
+            this.update ();
+        } else {
+            // Here the value is coming in 10ths of a minute (max 10)
+            // so we want to divide it by 2 to turn into the right
+            // output range (0-0.5v)
+            displayvalue=arg.tofloat()/2;
+            blink ();
+        }
+     }
+    }
+    function blink () {
+       // Gate so we don't keep turning it on
+       if (!blinking) {
+                blinking = true;
+            //  initiate blinking
+                runblinkloop ();
+                server.log("started blinking")
+            }
+       }
+    function dontblink () {
+        // Set the indicator
+        blinking = false;
+    }
+    function runblinkloop () {
+        // Check you're still supposed to be blinking
+        if (blinking) {
+            // if its on, turn it off and vv
+            if (hardwarestate>0) {
+                write(0);
+               // server.log ("Update LED (" + myname + "):" + 0);
+            } else { 
+                write(displayvalue);
+            //    server.log ("Update LED (" + myname + "):" + displayvalue);
+            }
+            // go again
+            imp.wakeup(0.15, this.runblinkloop.bindenv(this));
+        }
+    }
+    function test () {
+        this.tester = true;
+        this.update();
+    }
+   
+    // Variables for testing mode only
+    pos = 0;
+    dir = 1;
+    /////////////////////////////
+    function update () {
+       // If it's set to run as a test
+       if (this.tester) {
+           //server.log ("pin: " + this.pos.tofloat()/20);
+            write(this.pos.tofloat()/20);
+            this.pos += this.dir;
+            //server.log (this.pos);
+            if (this.pos==10||this.pos==0) {
+                this.dir *= -1;
+            }
+            imp.wakeup(0.1, this.update.bindenv(this));
+        // Otherwise write the value to the display and to the variable
+        } else {
+            write(displayvalue);
+        }
+    }
+}
+
+// Set up first display
+display1 <- display(hardware.pin5, ANALOG_OUT, "1st bus");
+//display1.test();
+// Set up second display
+display2 <- display(hardware.pin1, ANALOG_OUT, "2nd bus");
+//display2.test();
+
+
+// captures events passed in
+agent.on("time", function(arg) {
+    // For the testing
+    //arg=[0.5,1];
+    //arg=[];
+    
+    // Test to see if a first bus time has been passed in and if 
+    // update relevant display
+    //server.log ("here")
+    if (arg.len() > 0) {
+        //server.log("bus 1: " + arg[0]);
+         display1.setvalue (arg[0])
+    } else {
+        display1.setvalue (0);
+    }
+    // Test to see if a second bus time has been passed in and if 
+    // update relevant display
+    if (arg.len()>1) {
+        //server.log("bus 2: " + arg[1]);
+        display2.setvalue (arg[1]);
+    } else {
+        display2.setvalue (0);
+    }
+});
+
+/// Power check and feedback
+
+function powercheck () {
+    imp.wakeup(3600, powercheck);
+    local power = hardware.voltage();
+    agent.send("power", power);
+}
+
+// start the powercheck loop running
+powercheck();
