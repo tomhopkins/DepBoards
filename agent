@@ -1,0 +1,118 @@
+//agent
+
+// Class for getting data
+class LondonBuses {
+  // Hardcode Limesford Road for time being
+  baseURL = "http://countdown.api.tfl.gov.uk/interfaces/ura/instant_V1?StopCode1=58440&ReturnList=EstimatedTime";
+  timenow = null;
+  currenttimes = [];
+    
+
+    function getFeed () {
+        
+        local response = http.get(baseURL).sendsync();
+        // Error Handling (needed)
+        if (response.statuscode != 200) {
+            server.log("Error: " + response.body);
+            return null;
+        }
+        // Copy response into string
+        local output = returntimes(response.body);
+        // If the new array is a different length to the old one,
+        // then copy the new to the old and send to the client
+        if (currenttimes.len() != output.len()) {
+           currenttimes.clear ();
+           for (local i=0;i!=output.len();i++) {
+                currenttimes.append (output[i]);
+           }
+           //server.log ("changed")
+           device.send ("time", output);
+        // or if any of the elements are different
+        } else {
+            local changed = false
+            for (local i=0;i!=output.len();i++) {
+                if (currenttimes[i] != output [i]) {
+                    //server.log ("changed2")
+                    currenttimes[i] = output [i];
+                    changed = true;
+                }
+           }
+           if (changed) { 
+            //    server.log ("changed");
+                device.send("time", output); 
+            } else {
+            //    server.log ("unchanged");
+            }
+        }
+    }
+    function returntimes (raw) {
+            // NEED error handling etc
+            // Split into array based on linebreaks
+            local list = split (raw, "\r\n");
+            local header =  removebrackets(list[0]);
+            local timenow = trimms(split (header, ",")[2]).tointeger();
+            //loop through rest of array and extract bus arrival values into array
+            local times = [];
+            for (local i=1;i!=list.len();i++) {
+                local bus = split(removebrackets(list[i]),",");
+                local bustime = trimms(bus[1]).tointeger();
+                times.append(translatetime(bustime-timenow));
+            }
+    //  server.log(raw);
+    //  this.timenow = server.log(split (header, ",")[2]);
+        times.sort(function(a,b){return a-b});
+        return times;
+    }
+    function removebrackets (arg) {
+        //remove first and last character
+        // REWRITE TO catch errors
+        return arg.slice(1,arg.len()-1);
+    }
+    function trimms (arg) {
+        // Remove the ms from string!
+        return (arg.slice(0,arg.len()-3))
+    }
+    function translatetime (arg){
+        // Return 1-10 for minutes to display or 0.1 to 0.9 for seconds to display
+        local calc = 0;
+        if (arg>600) {
+            calc= 10;
+        } else if (arg > 59) {
+            calc = arg/60;
+        } else {
+            calc = arg.tofloat()/60; 
+        }
+        //server.log ("CALC: " + arg + " -> " +calc);
+        return calc;
+    }
+    function run () {
+        this.getFeed();
+        imp.wakeup(2, this.run.bindenv(this))
+    }  
+}
+// Put the class in global variable which can be accessed anywhere
+buses <- LondonBuses;
+buses.run();
+
+// Event handler for power messages back from device
+device.on("power", function(arg) {
+  if (arg < 2) {
+      server.log ("power (email alert): " + arg + "v");
+      mailgun("postmaster@buses.mailgun.org", "tom.hopkins@fluxx.uk.com", "Power low", "Bus voltage at " + arg + "v");      
+  } else {
+      server.log ("power (no mail alert): " + arg);
+  }
+})
+
+function mailgun(emailFrom, emailTo, emailSubject, emailText) {
+    const MAILGUN_URL = "https://api.mailgun.net/v2/buses.mailgun.org/messages";
+    const MAILGUN_API_KEY = "key-85locn6d60hbvcaoh-u0gzouia34mg39";
+    local auth = "Basic " + http.base64encode("api:"+MAILGUN_API_KEY);
+    local text = http.urlencode({from=emailFrom, to=emailTo, subject=emailSubject, text=emailText});
+    local req = http.post(MAILGUN_URL, {Authorization=auth}, text);
+    local res = req.sendsync();
+    if(res.statuscode != 200) {
+        server.log("error sending email: "+res.body);
+    }
+}
+
